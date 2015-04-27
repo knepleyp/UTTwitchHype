@@ -28,7 +28,7 @@ class ATwitchHype : public AActor
 	double TopTenCooldownTime;
 
 	UPROPERTY(config)
-	double PrintBetConfirmations;
+	bool bPrintBetConfirmations;
 };
 
 struct FUserProfile

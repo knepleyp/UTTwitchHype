@@ -11,7 +11,7 @@ DEFINE_LOG_CATEGORY(LogUTTwitchHype);
 ATwitchHype::ATwitchHype(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	PrintBetConfirmations = 0;
+	bPrintBetConfirmations = false;
 	TopTenCooldownTime = 60;
 }
 
@@ -37,7 +37,7 @@ FTwitchHype::FTwitchHype()
 	ChannelName = Settings->ChannelName;
 	BotNickname = Settings->BotNickname;
 	OAuth = Settings->OAuth;
-	bPrintBetConfirmations = (Settings->PrintBetConfirmations > 0);
+	bPrintBetConfirmations = Settings->bPrintBetConfirmations;
 	Top10CooldownTime = Settings->TopTenCooldownTime;
 
 	FString DatabasePath = FPaths::GameSavedDir() / "TwitchHype.db";
@@ -216,7 +216,7 @@ void FTwitchHype::OnPrivMsg(IRCMessage message)
 			InMemoryProfiles.Add(Username, Profile);
 			
 			// mirror memory back to the database, %Q will try to escape any injection hacks
-			char *zSQL = sqlite3_mprintf("INSERT INTO Users (name, credits, bankrupts) VALUES(%Q, %d)", message.prefix.nick.c_str(), Profile.credits, 0);
+			char *zSQL = sqlite3_mprintf("INSERT INTO Users (name, credits, bankrupts) VALUES (%Q, %d, %d)", message.prefix.nick.c_str(), Profile.credits, 0);
 			sqlite3_exec(db, zSQL, 0, 0, 0);
 			sqlite3_free(zSQL);
 

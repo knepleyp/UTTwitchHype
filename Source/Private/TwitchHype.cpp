@@ -11,6 +11,8 @@ DEFINE_LOG_CATEGORY(LogUTTwitchHype);
 ATwitchHype::ATwitchHype(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+	PrintBetConfirmations = 0;
+	TopTenCooldownTime = 60;
 }
 
 void OnPrivMsg(IRCMessage message, struct FTwitchHype* TwitchHype)
@@ -34,8 +36,8 @@ FTwitchHype::FTwitchHype()
 	ChannelName = Settings->ChannelName;
 	BotNickname = Settings->BotNickname;
 	OAuth = Settings->OAuth;
-	bPrintBetConfirmations = Settings->bPrintBetConfirmations;
-	Top10CooldownTime = Settings->Top10CooldownTime;
+	bPrintBetConfirmations = (Settings->PrintBetConfirmations > 0);
+	Top10CooldownTime = Settings->TopTenCooldownTime;
 
 	FString DatabasePath = FPaths::GameSavedDir() / "TwitchHype.db";
 	//sqlite3_open_v2(TCHAR_TO_ANSI(*DatabasePath), &db, SQLITE_OPEN_NOMUTEX, nullptr);

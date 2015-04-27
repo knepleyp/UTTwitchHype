@@ -23,12 +23,12 @@ class ATwitchHype : public AActor
 
 	UPROPERTY(config)
 	FString ChannelName;
+	
+	UPROPERTY(config)
+	double TopTenCooldownTime;
 
 	UPROPERTY(config)
-	bool bPrintBetConfirmations;
-
-	UPROPERTY(config)
-	double Top10CooldownTime;
+	double PrintBetConfirmations;
 };
 
 struct FUserProfile

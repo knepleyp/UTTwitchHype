@@ -13,6 +13,8 @@ ATwitchHype::ATwitchHype(const FObjectInitializer& ObjectInitializer)
 {
 	bPrintBetConfirmations = false;
 	TopTenCooldownTime = 60;
+	EventDelayTime = 20;
+	bAutoConnect = false;
 }
 
 void OnPrivMsg(IRCMessage message, struct FTwitchHype* TwitchHype)
@@ -39,6 +41,8 @@ FTwitchHype::FTwitchHype()
 	OAuth = Settings->OAuth;
 	bPrintBetConfirmations = Settings->bPrintBetConfirmations;
 	Top10CooldownTime = Settings->TopTenCooldownTime;
+	EventDelayTime = Settings->EventDelayTime;
+	bAutoConnect = Settings->bAutoConnect;
 
 	FString DatabasePath = FPaths::GameSavedDir() / "TwitchHype.db";
 	//sqlite3_open_v2(TCHAR_TO_ANSI(*DatabasePath), &db, SQLITE_OPEN_NOMUTEX, nullptr);
@@ -73,6 +77,11 @@ FTwitchHype::FTwitchHype()
 	}
 
 	client.HookIRCCommand("PRIVMSG", &::OnPrivMsg, this);
+
+	if (bAutoConnect)
+	{
+		ConnectToIRC();
+	}
 }
 
 FTwitchHype::~FTwitchHype()
@@ -107,6 +116,27 @@ void FTwitchHype::OnWorldDestroyed(UWorld* World)
 	KnownWorlds.Remove(World);
 }
 
+void FTwitchHype::ConnectToIRC()
+{
+	if (client.Connected())
+	{
+		return;
+	}
+
+	bAuthenticated = false;
+	bJoinedChannel = false;
+	//client.Debug(true);
+	if (client.InitSocket())
+	{
+		FString host = TEXT("irc.twitch.tv");
+		int32 port = 6667;
+		// non-blocking connect
+		if (!client.Connect(TCHAR_TO_ANSI(*host), port))
+		{
+		}
+	}
+}
+
 bool FTwitchHype::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar)
 {
 	if (FParse::Command(&Cmd, TEXT("IRCDISCONNECT")))
@@ -124,23 +154,7 @@ bool FTwitchHype::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar)
 
 	if (FParse::Command(&Cmd, TEXT("IRCCONNECT")))
 	{
-		if (client.Connected())
-		{
-			return true;
-		}
-
-		bAuthenticated = false;
-		bJoinedChannel = false;
-		client.Debug(true);
-		if (client.InitSocket())
-		{
-			FString host = TEXT("irc.twitch.tv");
-			int32 port = 6667;
-			// non-blocking connect
-			if (!client.Connect(TCHAR_TO_ANSI(*host), port))
-			{
-			}
-		}
+		ConnectToIRC();
 
 		return true;
 	}
@@ -197,6 +211,43 @@ void FTwitchHype::Tick(float DeltaTime)
 			bAnnounced = true;
 		}
 		client.ReceiveData();
+	}
+	
+	for (auto Iter = DelayedEvents.CreateIterator(); Iter; ++Iter)
+	{
+		Iter->TimeLeft -= DeltaTime;
+		if (Iter->TimeLeft <= 0)
+		{
+			if (Iter->EventType == TEXT("FirstBlood"))
+			{
+				FString FirstBlood = FString::Printf(TEXT("PRIVMSG %s :First Blood goes to %s!"), *ChannelName, *Iter->Winner);
+				client.SendIRC(TCHAR_TO_ANSI(*FirstBlood));
+
+				int32 MoneyWon = 0;
+				int32 HouseTake = 0;
+				AwardFirstBloodBets(Iter->Winner, MoneyWon, HouseTake);
+
+				FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
+				client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
+			}
+
+			if (Iter->EventType == TEXT("MatchEnd"))
+			{
+				FString WaitingPostMatch = FString::Printf(TEXT("PRIVMSG %s :The match is over, thanks for betting!"), *ChannelName);
+				client.SendIRC(TCHAR_TO_ANSI(*WaitingPostMatch));
+
+				int32 MoneyWon = 0;
+				int32 HouseTake = 0;
+				AwardBets(Iter->Winner, MoneyWon, HouseTake);
+
+				FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
+				client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
+
+				ActivePlayers.Empty();
+			}
+
+			DelayedEvents.RemoveAt(Iter.GetIndex());
+		}
 	}
 }
 
@@ -313,24 +364,19 @@ void FTwitchHype::NotifyMatchStateChange(UWorld* World, AUTGameMode* GM, FName N
 	}
 	else if (NewState == MatchState::WaitingPostMatch)
 	{
-		FString WaitingPostMatch = FString::Printf(TEXT("PRIVMSG %s :The match is over, thanks for betting!"), *ChannelName);
-		client.SendIRC(TCHAR_TO_ANSI(*WaitingPostMatch));
-		
 		if (GM && GM->UTGameState && GM->UTGameState->WinnerPlayerState)
 		{
-			int32 MoneyWon = 0;
-			int32 HouseTake = 0;
-			AwardBets(GM->UTGameState->WinnerPlayerState->PlayerName, MoneyWon, HouseTake);
-			
-			FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
-			client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
+			FDelayedEvent WinEvent;
+			WinEvent.EventType = TEXT("MatchEnd");
+			WinEvent.Winner = GM->UTGameState->WinnerPlayerState->PlayerName;
+			WinEvent.TimeLeft = EventDelayTime;
+
+			DelayedEvents.Add(WinEvent);
 		}
 		else
 		{
 			ForgiveBets();
 		}
-
-		ActivePlayers.Empty();
 	}
 	else if (NewState == MatchState::InProgress)
 	{
@@ -369,15 +415,12 @@ void FTwitchHype::ScoreKill(UWorld* World, AUTGameMode* GM, AController* Killer,
 		bFirstBlood = true;
 		if (Killer && Killer->PlayerState)
 		{
-			FString FirstBlood = FString::Printf(TEXT("PRIVMSG %s :First Blood goes to %s!"), *ChannelName, *Killer->PlayerState->PlayerName);
-			client.SendIRC(TCHAR_TO_ANSI(*FirstBlood));
+			FDelayedEvent FirstBloodEvent;
+			FirstBloodEvent.EventType = TEXT("FirstBlood");
+			FirstBloodEvent.Winner = Killer->PlayerState->PlayerName;
+			FirstBloodEvent.TimeLeft = EventDelayTime;
 
-			int32 MoneyWon = 0;
-			int32 HouseTake = 0;
-			AwardFirstBloodBets(Killer->PlayerState->PlayerName, MoneyWon, HouseTake);
-
-			FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
-			client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
+			DelayedEvents.Add(FirstBloodEvent);
 		}
 	}
 }

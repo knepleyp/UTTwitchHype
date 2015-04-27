@@ -29,6 +29,19 @@ class ATwitchHype : public AActor
 
 	UPROPERTY(config)
 	bool bPrintBetConfirmations;
+
+	UPROPERTY(config)
+	float EventDelayTime;
+
+	UPROPERTY(config)
+	bool bAutoConnect;
+};
+
+struct FDelayedEvent
+{
+	FString EventType;
+	FString Winner;
+	float TimeLeft;
 };
 
 struct FUserProfile
@@ -72,6 +85,7 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 
 	IRCClient client;
 
+	bool bAutoConnect;
 	bool bAuthenticated;
 	double AuthenticatedTime;
 	double JoinedTime;
@@ -83,6 +97,7 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	FString BotNickname;
 	FString OAuth;
 	int32 InitialCredits;
+	float EventDelayTime;
 
 	bool bPrintBetConfirmations;
 
@@ -91,6 +106,7 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	TMap<FString, FActiveBet> ActiveBets;
 	TMap<FString, FActiveBet> ActiveFirstBloodBets;
 	TArray<FString> ActivePlayers;
+	TArray<FDelayedEvent> DelayedEvents;
 	bool bFirstBlood;
 	bool bBettingOpen;
 
@@ -110,6 +126,8 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 
 	void PrintTop10();
 	void GiveExtraMoney(FUserProfile* Profile, const FString& Username);
+
+	void ConnectToIRC();
 };
 
 class FTwitchHypePlugin : public IModuleInterface

@@ -34,6 +34,7 @@ class ATwitchHype : public AActor
 struct FUserProfile
 {
 	int32 credits;
+	int32 bankrupts;
 
 	double lastusetime;
 };
@@ -81,6 +82,7 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	FString ChannelName;
 	FString BotNickname;
 	FString OAuth;
+	int32 InitialCredits;
 
 	bool bPrintBetConfirmations;
 
@@ -107,6 +109,7 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	void ParseFirstBloodBet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
 
 	void PrintTop10();
+	void GiveExtraMoney(FUserProfile* Profile, const FString& Username);
 };
 
 class FTwitchHypePlugin : public IModuleInterface

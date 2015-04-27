@@ -105,15 +105,18 @@ void IRCClient::HandleNotice(IRCMessage message)
     {
         text = text.substr(1, text.size() - 2);
         if (text.find(" ") == std::string::npos)
-        {
-            std::cout << "[Invalid " << text << " reply from " << from << "]" << std::endl;
+		{
+			UE_LOG(LogUTTwitchHype, Log, TEXT("[Invalid %s reply from %s]"), ANSI_TO_TCHAR(text.c_str()), ANSI_TO_TCHAR(from.c_str()));
             return;
         }
         std::string ctcp = text.substr(0, text.find(" "));
-        std::cout << "[" << from << " " << ctcp << " reply]: " << text.substr(text.find(" ") + 1) << std::endl;
+
+		UE_LOG(LogUTTwitchHype, Log, TEXT("[%s %s reply]: %s"), ANSI_TO_TCHAR(from.c_str()), ANSI_TO_TCHAR(ctcp.c_str()), ANSI_TO_TCHAR(text.substr(text.find(" ") + 1).c_str()));
     }
-    else
-        std::cout << "-" << from << "- " << text << std::endl;
+	else
+	{
+		UE_LOG(LogUTTwitchHype, Log, TEXT("-%s- %s"), ANSI_TO_TCHAR(from.c_str()), ANSI_TO_TCHAR(text.c_str()));
+	}
 }
 
 void IRCClient::HandleChannelJoinPart(IRCMessage message)

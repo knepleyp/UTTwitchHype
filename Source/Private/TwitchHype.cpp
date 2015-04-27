@@ -30,6 +30,7 @@ FTwitchHype::FTwitchHype()
 	db = nullptr;
 	bFirstBlood = false;
 	LastTop10Time = 0;
+	InitialCredits = 1500;
 
 	ATwitchHype* Settings = ATwitchHype::StaticClass()->GetDefaultObject<ATwitchHype>();
 	// Load these from config file
@@ -51,7 +52,7 @@ FTwitchHype::FTwitchHype()
 	if (db)
 	{
 		// http://www.sqlite.org/lang_createtable.html#rowid claims this is an alias for row id
-		FString CreateCommand = TEXT("CREATE TABLE IF NOT EXISTS Users (name varchar(50) NOT NULL PRIMARY KEY, credits int, jointime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+		FString CreateCommand = TEXT("CREATE TABLE IF NOT EXISTS Users (name varchar(50) NOT NULL PRIMARY KEY, credits int, bankrupts int, jointime timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP)");
 		sqlite3_exec(db, TCHAR_TO_ANSI(*CreateCommand), nullptr, nullptr, nullptr);
 		
 		FString QueryCommand = TEXT("SELECT name, credits FROM Users");
@@ -90,7 +91,7 @@ void FTwitchHype::FlushToDB()
 	{
 		// mirror memory back to the database, %Q will try to escape any injection hacks
 		const FUserProfile& Profile = It.Value();
-		char *zSQL = sqlite3_mprintf("UPDATE Users SET credits=%d WHERE name=%Q", Profile.credits, TCHAR_TO_ANSI(*It.Key()));
+		char *zSQL = sqlite3_mprintf("UPDATE Users SET credits=%d,bankrupts=%d WHERE name=%Q", Profile.credits, Profile.bankrupts, TCHAR_TO_ANSI(*It.Key()));
 		sqlite3_exec(db, zSQL, 0, 0, 0);
 		sqlite3_free(zSQL);
 	}
@@ -130,7 +131,7 @@ bool FTwitchHype::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar)
 
 		bAuthenticated = false;
 		bJoinedChannel = false;
-		//client.Debug(true);
+		client.Debug(true);
 		if (client.InitSocket())
 		{
 			FString host = TEXT("irc.twitch.tv");
@@ -147,6 +148,14 @@ bool FTwitchHype::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar)
 	if (FParse::Command(&Cmd, TEXT("FLUSHTODB")))
 	{
 		FlushToDB();
+
+		return true;
+	}
+
+	if (FParse::Command(&Cmd, TEXT("FORGIVEBETS")))
+	{
+		ForgiveBets();
+		ActivePlayers.Empty();
 
 		return true;
 	}
@@ -202,11 +211,12 @@ void FTwitchHype::OnPrivMsg(IRCMessage message)
 		if (InMemoryProfiles.Find(Username) == nullptr)
 		{
 			FUserProfile Profile;
-			Profile.credits = 1500;
+			Profile.credits = InitialCredits;
+			Profile.bankrupts = 0;
 			InMemoryProfiles.Add(Username, Profile);
 			
 			// mirror memory back to the database, %Q will try to escape any injection hacks
-			char *zSQL = sqlite3_mprintf("INSERT INTO Users (name, credits) VALUES(%Q, %d)", message.prefix.nick.c_str(), Profile.credits);
+			char *zSQL = sqlite3_mprintf("INSERT INTO Users (name, credits, bankrupts) VALUES(%Q, %d)", message.prefix.nick.c_str(), Profile.credits, 0);
 			sqlite3_exec(db, zSQL, 0, 0, 0);
 			sqlite3_free(zSQL);
 
@@ -259,8 +269,12 @@ void FTwitchHype::OnPrivMsg(IRCMessage message)
 			{
 				PrintTop10();
 			}
+			else if (ParsedCommand[0] == TEXT("!ineedmoney"))
+			{
+				GiveExtraMoney(Profile, Username);
+			}
 		}
-		else
+		else if (ParsedCommand[0][0] == TEXT('!'))
 		{
 			FString NoAccountCreated = FString::Printf(TEXT("PRIVMSG %s :No account exists for %s, please use !register"), *ChannelName, *Username);
 			client.SendIRC(TCHAR_TO_ANSI(*NoAccountCreated));
@@ -375,6 +389,12 @@ void FTwitchHype::ForgiveBets()
 		InMemoryProfiles[It.Key()].credits += It.Value().amount;
 	}
 	ActiveBets.Empty();
+
+	for (auto It = ActiveFirstBloodBets.CreateConstIterator(); It; ++It)
+	{
+		InMemoryProfiles[It.Key()].credits += It.Value().amount;
+	}
+	ActiveFirstBloodBets.Empty();
 }
 
 void FTwitchHype::AwardBets(const FString& Winner, int32& MoneyWon, int32& HouseTake)
@@ -542,4 +562,16 @@ void FTwitchHype::PrintTop10()
 	}
 	sqlite3_finalize(sqlStatement);
 	LastTop10Time = FPlatformTime::Seconds();
+}
+
+void FTwitchHype::GiveExtraMoney(FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < InitialCredits)
+	{
+		Profile->credits = InitialCredits;
+		Profile->bankrupts++;
+
+		FString Bankrupt = FString::Printf(TEXT("PRIVMSG %s :%s you've been restored to %d credits, you've gone bankrupt %d times"), *ChannelName, *Username, InitialCredits, Profile->bankrupts);
+		client.SendIRC(TCHAR_TO_ANSI(*Bankrupt));
+	}
 }

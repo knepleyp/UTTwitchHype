@@ -35,6 +35,12 @@ class ATwitchHype : public AActor
 
 	UPROPERTY(config)
 	bool bAutoConnect;
+
+	UPROPERTY(config)
+	int32 InitialCredits;
+
+	UPROPERTY(config)
+	int32 MaxBet;
 };
 
 struct FDelayedEvent
@@ -91,6 +97,7 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	double JoinedTime;
 	double LastTop10Time;
 	double Top10CooldownTime;
+	int32 MaxBet;
 	bool bJoinedChannel;
 	bool bAnnounced;
 	FString ChannelName;
@@ -103,13 +110,17 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 
 	sqlite3 *db;
 	TMap<FString, FUserProfile> InMemoryProfiles;
-	TMap<FString, FActiveBet> ActiveBets;
-	TMap<FString, FActiveBet> ActiveFirstBloodBets;
 	TArray<FString> ActivePlayers;
 	TArray<FDelayedEvent> DelayedEvents;
-	bool bFirstBlood;
 	bool bBettingOpen;
 
+	bool bFirstBlood;
+	bool bFirstSuicide;
+
+	TMap<FString, FActiveBet> ActiveBets;
+	TMap<FString, FActiveBet> ActiveFirstBloodBets;
+	TMap<FString, FActiveBet> ActiveFirstSuicideBets;
+	
 	void OnPrivMsg(IRCMessage message);
 
 	void PostPlayerInit(UWorld* World, AUTGameMode* GM, AController* C);
@@ -117,17 +128,20 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	void ScoreKill(UWorld* World, AUTGameMode* GM, AController* Killer, AController* Other, TSubclassOf<UDamageType> DamageType);
 
 	void ForgiveBets();
-	void AwardBets(const FString& Winner, int32& MoneyWon, int32& HouseTake);
-	void AwardFirstBloodBets(const FString& Winner, int32& MoneyWon, int32& HouseTake);
 	void FlushToDB();
 
-	void ParseBet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
-	void ParseFirstBloodBet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
+	void ParseABet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username, TMap<FString, FActiveBet>& BetMap);
+
+	void AwardBets(const FString& Winner, int32& MoneyWon, int32& HouseTake, TMap<FString, FActiveBet>& BetMap);
+
+	void UndoBets(FUserProfile* Profile, const FString& Username);
 
 	void PrintTop10();
 	void GiveExtraMoney(FUserProfile* Profile, const FString& Username);
 
 	void ConnectToIRC();
+
+	bool HasActiveBets(const FString& Username);
 };
 
 class FTwitchHypePlugin : public IModuleInterface

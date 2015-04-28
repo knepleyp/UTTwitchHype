@@ -15,6 +15,8 @@ ATwitchHype::ATwitchHype(const FObjectInitializer& ObjectInitializer)
 	TopTenCooldownTime = 60;
 	EventDelayTime = 20;
 	bAutoConnect = false;
+	InitialCredits = 1500;
+	MaxBet = 1000;
 }
 
 void OnPrivMsg(IRCMessage message, struct FTwitchHype* TwitchHype)
@@ -31,8 +33,8 @@ FTwitchHype::FTwitchHype()
 	AuthenticatedTime = 0;
 	db = nullptr;
 	bFirstBlood = false;
+	bFirstSuicide = false;
 	LastTop10Time = 0;
-	InitialCredits = 1500;
 
 	ATwitchHype* Settings = ATwitchHype::StaticClass()->GetDefaultObject<ATwitchHype>();
 	// Load these from config file
@@ -43,6 +45,8 @@ FTwitchHype::FTwitchHype()
 	Top10CooldownTime = Settings->TopTenCooldownTime;
 	EventDelayTime = Settings->EventDelayTime;
 	bAutoConnect = Settings->bAutoConnect;
+	InitialCredits = Settings->InitialCredits;
+	MaxBet = Settings->MaxBet;
 
 	FString DatabasePath = FPaths::GameSavedDir() / "TwitchHype.db";
 	//sqlite3_open_v2(TCHAR_TO_ANSI(*DatabasePath), &db, SQLITE_OPEN_NOMUTEX, nullptr);
@@ -225,7 +229,20 @@ void FTwitchHype::Tick(float DeltaTime)
 
 				int32 MoneyWon = 0;
 				int32 HouseTake = 0;
-				AwardFirstBloodBets(Iter->Winner, MoneyWon, HouseTake);
+				AwardBets(Iter->Winner, MoneyWon, HouseTake, ActiveFirstBloodBets);
+
+				FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
+				client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
+			}
+
+			if (Iter->EventType == TEXT("FirstSuicide"))
+			{
+				FString FirstBlood = FString::Printf(TEXT("PRIVMSG %s :First Suicide goes to %s!"), *ChannelName, *Iter->Winner);
+				client.SendIRC(TCHAR_TO_ANSI(*FirstBlood));
+
+				int32 MoneyWon = 0;
+				int32 HouseTake = 0;
+				AwardBets(Iter->Winner, MoneyWon, HouseTake, ActiveFirstSuicideBets);
 
 				FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
 				client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
@@ -238,7 +255,7 @@ void FTwitchHype::Tick(float DeltaTime)
 
 				int32 MoneyWon = 0;
 				int32 HouseTake = 0;
-				AwardBets(Iter->Winner, MoneyWon, HouseTake);
+				AwardBets(Iter->Winner, MoneyWon, HouseTake, ActiveBets);
 
 				FString BettingStats = FString::Printf(TEXT("PRIVMSG %s :Betting stats: %d credits paid out, %d credits lost"), *ChannelName, MoneyWon, HouseTake);
 				client.SendIRC(TCHAR_TO_ANSI(*BettingStats));
@@ -310,19 +327,27 @@ void FTwitchHype::OnPrivMsg(IRCMessage message)
 		{
 			if (ParsedCommand[0] == TEXT("!bet"))
 			{
-				ParseBet(ParsedCommand, Profile, Username);
+				ParseABet(ParsedCommand, Profile, Username, ActiveBets);
 			}
 			else if (ParsedCommand[0] == TEXT("!firstbloodbet"))
 			{
-				ParseFirstBloodBet(ParsedCommand, Profile, Username);
+				ParseABet(ParsedCommand, Profile, Username, ActiveFirstBloodBets);
+			}
+			else if (ParsedCommand[0] == TEXT("!firstsuicidebet"))
+			{
+				ParseABet(ParsedCommand, Profile, Username, ActiveFirstSuicideBets);
 			}
 			else if (ParsedCommand[0] == TEXT("!top10"))
 			{
 				PrintTop10();
 			}
-			else if (ParsedCommand[0] == TEXT("!ineedmoney"))
+			else if (ParsedCommand[0] == TEXT("!bankrupt"))
 			{
 				GiveExtraMoney(Profile, Username);
+			}
+			else if (ParsedCommand[0] == TEXT("!undobets"))
+			{
+				UndoBets(Profile, Username);
 			}
 		}
 		else if (ParsedCommand[0][0] == TEXT('!'))
@@ -384,6 +409,7 @@ void FTwitchHype::NotifyMatchStateChange(UWorld* World, AUTGameMode* GM, FName N
 		client.SendIRC(TCHAR_TO_ANSI(*InProgress));
 
 		bFirstBlood = false;
+		bFirstSuicide = false;
 		bBettingOpen = false;
 	}
 	else if (NewState == MatchState::Aborted)
@@ -423,6 +449,20 @@ void FTwitchHype::ScoreKill(UWorld* World, AUTGameMode* GM, AController* Killer,
 			DelayedEvents.Add(FirstBloodEvent);
 		}
 	}
+
+	if (!bFirstSuicide && Killer == Other)
+	{
+		bFirstSuicide = true;
+		if (Killer && Killer->PlayerState)
+		{
+			FDelayedEvent FirstSuicideEvent;
+			FirstSuicideEvent.EventType = TEXT("FirstSuicide");
+			FirstSuicideEvent.Winner = Killer->PlayerState->PlayerName;
+			FirstSuicideEvent.TimeLeft = EventDelayTime;
+
+			DelayedEvents.Add(FirstSuicideEvent);
+		}
+	}
 }
 
 void FTwitchHype::ForgiveBets()
@@ -438,11 +478,17 @@ void FTwitchHype::ForgiveBets()
 		InMemoryProfiles[It.Key()].credits += It.Value().amount;
 	}
 	ActiveFirstBloodBets.Empty();
+
+	for (auto It = ActiveFirstSuicideBets.CreateConstIterator(); It; ++It)
+	{
+		InMemoryProfiles[It.Key()].credits += It.Value().amount;
+	}
+	ActiveFirstSuicideBets.Empty();
 }
 
-void FTwitchHype::AwardBets(const FString& Winner, int32& MoneyWon, int32& HouseTake)
+void FTwitchHype::AwardBets(const FString& Winner, int32& MoneyWon, int32& HouseTake, TMap<FString, FActiveBet>& BetMap)
 {
-	for (auto It = ActiveBets.CreateConstIterator(); It; ++It)
+	for (auto It = BetMap.CreateConstIterator(); It; ++It)
 	{
 		if (It.Value().winner == Winner)
 		{
@@ -454,27 +500,10 @@ void FTwitchHype::AwardBets(const FString& Winner, int32& MoneyWon, int32& House
 			HouseTake += It.Value().amount;
 		}
 	}
-	ActiveBets.Empty();
+	BetMap.Empty();
 }
 
-void FTwitchHype::AwardFirstBloodBets(const FString& Winner, int32& MoneyWon, int32& HouseTake)
-{
-	for (auto It = ActiveFirstBloodBets.CreateConstIterator(); It; ++It)
-	{
-		if (It.Value().winner == Winner)
-		{
-			InMemoryProfiles[It.Key()].credits += It.Value().amount * 2;
-			MoneyWon += It.Value().amount;
-		}
-		else
-		{
-			HouseTake += It.Value().amount;
-		}
-	}
-	ActiveFirstBloodBets.Empty();
-}
-
-void FTwitchHype::ParseBet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
+void FTwitchHype::ParseABet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username, TMap<FString, FActiveBet>& BetMap)
 {
 	if (!bBettingOpen)
 	{
@@ -483,10 +512,10 @@ void FTwitchHype::ParseBet(const TArray<FString>& ParsedCommand, FUserProfile* P
 	}
 	else if (ParsedCommand.Num() < 3)
 	{
-		FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you must bet in the format \"!bet <winner> <amount>\" !"), *ChannelName, *Username);
+		FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you must bet in the format \"%s <winner> <amount>\" !"), *ParsedCommand[0], *ChannelName, *Username);
 		client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
 	}
-	else if (ActiveBets.Find(Username))
+	else if (BetMap.Find(Username))
 	{
 		FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you've already placed a bet!"), *ChannelName, *Username);
 		client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
@@ -506,56 +535,9 @@ void FTwitchHype::ParseBet(const TArray<FString>& ParsedCommand, FUserProfile* P
 			FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you only have %d credits to wager!"), *ChannelName, *Username, Profile->credits);
 			client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
 		}
-		else if (ActivePlayerIndex == INDEX_NONE)
+		else if (NewBet.amount > MaxBet)
 		{
-			FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s I'm sorry, but %s is not an active player in the match!"), *ChannelName, *Username, *NewBet.winner);
-			client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
-		}
-		else
-		{
-			ActiveBets.Add(Username, NewBet);
-
-			Profile->credits -= NewBet.amount;
-
-			if (bPrintBetConfirmations)
-			{
-				FString PlacedBet = FString::Printf(TEXT("PRIVMSG %s :%s you've placed %d on %s"), *ChannelName, *Username, NewBet.amount, *NewBet.winner);
-				client.SendIRC(TCHAR_TO_ANSI(*PlacedBet));
-			}
-		}
-	}
-}
-
-void FTwitchHype::ParseFirstBloodBet(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
-{
-	if (!bBettingOpen)
-	{
-		FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s betting is not open right now!"), *ChannelName, *Username);
-		client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
-	}
-	else if (ParsedCommand.Num() < 3)
-	{
-		FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you must bet in the format \"!firstbloodbet <winner> <amount>\" !"), *ChannelName, *Username);
-		client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
-	}
-	else if (ActiveFirstBloodBets.Find(Username))
-	{
-		FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you've already placed a bet!"), *ChannelName, *Username);
-		client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
-	}
-	else
-	{
-		FActiveBet NewBet;
-		NewBet.winner = ParsedCommand[1];
-		NewBet.amount = FCString::Atoi(*ParsedCommand[2]);
-
-		// Need support for red and blue bets for teams, only works for duels and DM now
-
-		int32 ActivePlayerIndex = ActivePlayers.Find(NewBet.winner);
-
-		if (NewBet.amount > Profile->credits || NewBet.amount <= 0)
-		{
-			FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s you only have %d credits to wager!"), *ChannelName, *Username, Profile->credits);
+			FString InvalidBet = FString::Printf(TEXT("PRIVMSG %s :%s %d is over the max bet value of %d!"), *ChannelName, *Username, NewBet.amount, MaxBet);
 			client.SendIRC(TCHAR_TO_ANSI(*InvalidBet));
 		}
 		else if (ActivePlayerIndex == INDEX_NONE)
@@ -565,17 +547,18 @@ void FTwitchHype::ParseFirstBloodBet(const TArray<FString>& ParsedCommand, FUser
 		}
 		else
 		{
-			ActiveFirstBloodBets.Add(Username, NewBet);
+			BetMap.Add(Username, NewBet);
 
 			Profile->credits -= NewBet.amount;
 
 			if (bPrintBetConfirmations)
 			{
-				FString PlacedBet = FString::Printf(TEXT("PRIVMSG %s :%s you've placed %d on %s to take first blood"), *ChannelName, *Username, NewBet.amount, *NewBet.winner);
+				FString PlacedBet = FString::Printf(TEXT("PRIVMSG %s :%s you've placed %d on %s using %s"), *ChannelName, *Username, NewBet.amount, *NewBet.winner, *ParsedCommand[0]);
 				client.SendIRC(TCHAR_TO_ANSI(*PlacedBet));
 			}
 		}
 	}
+
 }
 
 void FTwitchHype::PrintTop10()
@@ -609,12 +592,58 @@ void FTwitchHype::PrintTop10()
 
 void FTwitchHype::GiveExtraMoney(FUserProfile* Profile, const FString& Username)
 {
-	if (Profile->credits < InitialCredits)
+	if (Profile->credits < InitialCredits && !HasActiveBets(Username))
 	{
 		Profile->credits = InitialCredits;
 		Profile->bankrupts++;
 
 		FString Bankrupt = FString::Printf(TEXT("PRIVMSG %s :%s you've been restored to %d credits, you've gone bankrupt %d times"), *ChannelName, *Username, InitialCredits, Profile->bankrupts);
 		client.SendIRC(TCHAR_TO_ANSI(*Bankrupt));
+	}
+}
+
+bool FTwitchHype::HasActiveBets(const FString& Username)
+{
+	if (ActiveBets.Find(Username))
+	{
+		return true;
+	}
+
+	if (ActiveFirstBloodBets.Find(Username))
+	{
+		return true;
+	}
+
+	if (ActiveFirstSuicideBets.Find(Username))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+void FTwitchHype::UndoBets(FUserProfile* Profile, const FString& Username)
+{
+	FActiveBet* ActiveBet = nullptr;
+	
+	ActiveBet = ActiveBets.Find(Username);
+	if (ActiveBet)
+	{
+		Profile->credits += ActiveBet->amount;
+		ActiveBets.Remove(Username);
+	}
+
+	ActiveBet = ActiveFirstBloodBets.Find(Username);
+	if (ActiveBet)
+	{
+		Profile->credits += ActiveBet->amount;
+		ActiveFirstBloodBets.Remove(Username);
+	}
+
+	ActiveBet = ActiveFirstSuicideBets.Find(Username);
+	if (ActiveBet)
+	{
+		Profile->credits += ActiveBet->amount;
+		ActiveFirstSuicideBets.Remove(Username);
 	}
 }

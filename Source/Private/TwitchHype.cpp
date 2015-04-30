@@ -13,10 +13,13 @@ ATwitchHype::ATwitchHype(const FObjectInitializer& ObjectInitializer)
 {
 	bPrintBetConfirmations = false;
 	TopTenCooldownTime = 60;
-	EventDelayTime = 20;
+	EventDelayTime = 25;
+	BettingCloseDelayTime = 30;
 	bAutoConnect = false;
 	InitialCredits = 1500;
 	MaxBet = 1000;
+	bDebug = false;
+	ChatCost = 2000;
 }
 
 void OnPrivMsg(IRCMessage message, struct FTwitchHype* TwitchHype)
@@ -44,9 +47,12 @@ FTwitchHype::FTwitchHype()
 	bPrintBetConfirmations = Settings->bPrintBetConfirmations;
 	Top10CooldownTime = Settings->TopTenCooldownTime;
 	EventDelayTime = Settings->EventDelayTime;
+	BettingCloseDelayTime = Settings->BettingCloseDelayTime;
 	bAutoConnect = Settings->bAutoConnect;
 	InitialCredits = Settings->InitialCredits;
 	MaxBet = Settings->MaxBet;
+	bDebug = Settings->bDebug;
+	ChatCost = Settings->ChatCost;
 
 	FString DatabasePath = FPaths::GameSavedDir() / "TwitchHype.db";
 	//sqlite3_open_v2(TCHAR_TO_ANSI(*DatabasePath), &db, SQLITE_OPEN_NOMUTEX, nullptr);
@@ -129,7 +135,11 @@ void FTwitchHype::ConnectToIRC()
 
 	bAuthenticated = false;
 	bJoinedChannel = false;
-	//client.Debug(true);
+	if (bDebug)
+	{
+		client.Debug(true);
+	}
+
 	if (client.InitSocket())
 	{
 		FString host = TEXT("irc.twitch.tv");
@@ -222,6 +232,13 @@ void FTwitchHype::Tick(float DeltaTime)
 		Iter->TimeLeft -= DeltaTime;
 		if (Iter->TimeLeft <= 0)
 		{
+			if (Iter->EventType == TEXT("BettingClosed"))
+			{
+				bBettingOpen = false;
+				FString InProgress = FString::Printf(TEXT("PRIVMSG %s :The match is starting, betting is now closed!"), *ChannelName);
+				client.SendIRC(TCHAR_TO_ANSI(*InProgress));
+			}
+
 			if (Iter->EventType == TEXT("FirstBlood"))
 			{
 				FString FirstBlood = FString::Printf(TEXT("PRIVMSG %s :First Blood goes to %s!"), *ChannelName, *Iter->Winner);
@@ -349,6 +366,10 @@ void FTwitchHype::OnPrivMsg(IRCMessage message)
 			{
 				UndoBets(Profile, Username);
 			}
+			else if (ParsedCommand[0] == TEXT("!chat"))
+			{
+				SendChat(Command, Profile, Username);
+			}
 		}
 		else if (ParsedCommand[0][0] == TEXT('!'))
 		{
@@ -405,12 +426,14 @@ void FTwitchHype::NotifyMatchStateChange(UWorld* World, AUTGameMode* GM, FName N
 	}
 	else if (NewState == MatchState::InProgress)
 	{
-		FString InProgress = FString::Printf(TEXT("PRIVMSG %s :The match is starting, betting is now closed!"), *ChannelName);
-		client.SendIRC(TCHAR_TO_ANSI(*InProgress));
+		FDelayedEvent BettingClosedEvent;
+		BettingClosedEvent.EventType = TEXT("BettingClosed");
+		BettingClosedEvent.TimeLeft = BettingCloseDelayTime;
 
+		DelayedEvents.Add(BettingClosedEvent);
+		
 		bFirstBlood = false;
 		bFirstSuicide = false;
-		bBettingOpen = false;
 	}
 	else if (NewState == MatchState::Aborted)
 	{
@@ -645,5 +668,34 @@ void FTwitchHype::UndoBets(FUserProfile* Profile, const FString& Username)
 	{
 		Profile->credits += ActiveBet->amount;
 		ActiveFirstSuicideBets.Remove(Username);
+	}
+}
+
+void FTwitchHype::SendChat(const FString& Command, FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < ChatCost)
+	{
+		FString Bankrupt = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to chat, you only have %d!"), *ChannelName, *Username, ChatCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*Bankrupt));
+
+		return;
+	}
+
+	Profile->credits -= ChatCost;
+
+	FString ChatText = Command;
+	ChatText.RemoveFromStart(TEXT("!chat "));
+	FString Message = Username + TEXT(" says: ") + ChatText;
+	
+	for (auto World : KnownWorlds)
+	{
+		for (FConstPlayerControllerIterator Iterator = World->GetPlayerControllerIterator(); Iterator; ++Iterator)
+		{
+			AUTBasePlayerController* UTPC = Cast<AUTPlayerController>(*Iterator);
+			if (UTPC != nullptr)
+			{
+				UTPC->ClientSay(nullptr, Message, ChatDestinations::Local);
+			}
+		}
 	}
 }

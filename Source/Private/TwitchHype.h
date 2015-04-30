@@ -41,6 +41,15 @@ class ATwitchHype : public AActor
 
 	UPROPERTY(config)
 	int32 MaxBet;
+
+	UPROPERTY(config)
+	bool bDebug;
+
+	UPROPERTY(config)
+	int32 ChatCost;
+
+	UPROPERTY(config)
+	float BettingCloseDelayTime;
 };
 
 struct FDelayedEvent
@@ -105,6 +114,9 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	FString OAuth;
 	int32 InitialCredits;
 	float EventDelayTime;
+	float BettingCloseDelayTime;
+	bool bDebug;
+	int32 ChatCost;
 
 	bool bPrintBetConfirmations;
 
@@ -135,6 +147,8 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	void AwardBets(const FString& Winner, int32& MoneyWon, int32& HouseTake, TMap<FString, FActiveBet>& BetMap);
 
 	void UndoBets(FUserProfile* Profile, const FString& Username);
+	
+	void SendChat(const FString& Command, FUserProfile* Profile, const FString& Username);
 
 	void PrintTop10();
 	void GiveExtraMoney(FUserProfile* Profile, const FString& Username);

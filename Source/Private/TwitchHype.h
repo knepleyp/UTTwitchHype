@@ -49,6 +49,21 @@ class ATwitchHype : public AActor
 	int32 ChatCost;
 
 	UPROPERTY(config)
+	int32 TauntCost;
+
+	UPROPERTY(config)
+	int32 FeignDeathCost;
+
+	UPROPERTY(config)
+	int32 ArmorCost;
+
+	UPROPERTY(config)
+	int32 RedeemerCost;
+
+	UPROPERTY(config)
+	int32 HatCost;
+
+	UPROPERTY(config)
 	float BettingCloseDelayTime;
 };
 
@@ -116,7 +131,13 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	float EventDelayTime;
 	float BettingCloseDelayTime;
 	bool bDebug;
+
 	int32 ChatCost;
+	int32 TauntCost;
+	int32 FeignDeathCost;
+	int32 ArmorCost;
+	int32 RedeemerCost;
+	int32 HatCost;
 
 	bool bPrintBetConfirmations;
 
@@ -149,6 +170,12 @@ struct FTwitchHype : FTickableGameObject, FSelfRegisteringExec
 	void UndoBets(FUserProfile* Profile, const FString& Username);
 	
 	void SendChat(const FString& Command, FUserProfile* Profile, const FString& Username);
+	
+	void SendTaunt(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
+	void SendFeignDeath(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
+	void SendArmor(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
+	void SendRedeemer(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
+	void SendHat(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username);
 
 	void PrintTop10();
 	void GiveExtraMoney(FUserProfile* Profile, const FString& Username);

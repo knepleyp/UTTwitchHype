@@ -5,6 +5,7 @@
 #include "UTPlayerController.h"
 #include "UTGameState.h"
 #include "Core.h"
+#include "UTArmor.h"
 
 DEFINE_LOG_CATEGORY(LogUTTwitchHype);
 
@@ -20,6 +21,11 @@ ATwitchHype::ATwitchHype(const FObjectInitializer& ObjectInitializer)
 	MaxBet = 1000;
 	bDebug = false;
 	ChatCost = 2000;
+	ArmorCost = 4000;
+	RedeemerCost = 4000;
+	HatCost = 2000;
+	FeignDeathCost = 2000;
+	TauntCost = 2000;
 }
 
 void OnPrivMsg(IRCMessage message, struct FTwitchHype* TwitchHype)
@@ -53,6 +59,11 @@ FTwitchHype::FTwitchHype()
 	MaxBet = Settings->MaxBet;
 	bDebug = Settings->bDebug;
 	ChatCost = Settings->ChatCost;
+	TauntCost = Settings->TauntCost;
+	FeignDeathCost = Settings->FeignDeathCost;
+	ArmorCost = Settings->ArmorCost;
+	RedeemerCost = Settings->RedeemerCost;
+	HatCost = Settings->HatCost;
 
 	FString DatabasePath = FPaths::GameSavedDir() / "TwitchHype.db";
 	//sqlite3_open_v2(TCHAR_TO_ANSI(*DatabasePath), &db, SQLITE_OPEN_NOMUTEX, nullptr);
@@ -370,6 +381,26 @@ void FTwitchHype::OnPrivMsg(IRCMessage message)
 			{
 				SendChat(Command, Profile, Username);
 			}
+			else if (ParsedCommand[0] == TEXT("!taunt"))
+			{
+				SendTaunt(ParsedCommand, Profile, Username);
+			}
+			else if (ParsedCommand[0] == TEXT("!feigndeath"))
+			{
+				SendFeignDeath(ParsedCommand, Profile, Username);
+			}
+			else if (ParsedCommand[0] == TEXT("!armor"))
+			{
+				SendArmor(ParsedCommand, Profile, Username);
+			}
+			else if (ParsedCommand[0] == TEXT("!redeemer"))
+			{
+				SendRedeemer(ParsedCommand, Profile, Username);
+			}
+			else if (ParsedCommand[0] == TEXT("!hat"))
+			{
+				SendHat(ParsedCommand, Profile, Username);
+			}
 		}
 		else if (ParsedCommand[0][0] == TEXT('!'))
 		{
@@ -515,7 +546,7 @@ void FTwitchHype::AwardBets(const FString& Winner, int32& MoneyWon, int32& House
 	{
 		if (It.Value().winner == Winner)
 		{
-			InMemoryProfiles[It.Key()].credits += It.Value().amount * 2;
+			InMemoryProfiles[It.Key()].credits += It.Value().amount * It.Value().odds;
 			MoneyWon += It.Value().amount;
 		}
 		else
@@ -548,6 +579,7 @@ void FTwitchHype::ParseABet(const TArray<FString>& ParsedCommand, FUserProfile* 
 		FActiveBet NewBet;
 		NewBet.winner = ParsedCommand[1];
 		NewBet.amount = FCString::Atoi(*ParsedCommand[2]);
+		NewBet.odds = 2;
 
 		// Need support for red and blue bets for teams, only works for duels and DM now
 
@@ -675,8 +707,8 @@ void FTwitchHype::SendChat(const FString& Command, FUserProfile* Profile, const 
 {
 	if (Profile->credits < ChatCost)
 	{
-		FString Bankrupt = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to chat, you only have %d!"), *ChannelName, *Username, ChatCost, Profile->credits);
-		client.SendIRC(TCHAR_TO_ANSI(*Bankrupt));
+		FString InsufficientCredits = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to chat, you only have %d!"), *ChannelName, *Username, ChatCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*InsufficientCredits));
 
 		return;
 	}
@@ -695,6 +727,167 @@ void FTwitchHype::SendChat(const FString& Command, FUserProfile* Profile, const 
 			if (UTPC != nullptr)
 			{
 				UTPC->ClientSay(nullptr, Message, ChatDestinations::Local);
+			}
+		}
+	}
+}
+
+void FTwitchHype::SendTaunt(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < TauntCost)
+	{
+		FString InsufficientCredits = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to taunt, you only have %d!"), *ChannelName, *Username, TauntCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*InsufficientCredits));
+
+		return;
+	}
+
+	Profile->credits -= TauntCost;
+	for (auto World : KnownWorlds)
+	{
+		for (FConstPawnIterator Iterator = World->GetPawnIterator(); Iterator; ++Iterator)
+		{
+			AUTCharacter* UTChar = Cast<AUTCharacter>(*Iterator);
+			if (UTChar)
+			{
+				UTChar->PlayTauntByIndex(0);
+			}
+		}
+	}
+}
+
+void FTwitchHype::SendFeignDeath(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < FeignDeathCost)
+	{
+		FString InsufficientCredits = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to feign death, you only have %d!"), *ChannelName, *Username, FeignDeathCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*InsufficientCredits));
+
+		return;
+	}
+
+	Profile->credits -= FeignDeathCost;
+	for (auto World : KnownWorlds)
+	{
+		for (FConstPawnIterator Iterator = World->GetPawnIterator(); Iterator; ++Iterator)
+		{
+			AUTCharacter* UTChar = Cast<AUTCharacter>(*Iterator);
+			if (UTChar)
+			{
+				UTChar->FeignDeath();
+			}
+		}
+	}
+}
+
+void FTwitchHype::SendArmor(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < ArmorCost)
+	{
+		FString InsufficientCredits = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to send armor, you only have %d!"), *ChannelName, *Username, ArmorCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*InsufficientCredits));
+
+		return;
+	}
+	
+	if (ParsedCommand.Num() < 2)
+	{
+		FString InvalidCommand = FString::Printf(TEXT("PRIVMSG %s :%s, please use the form !armor <playername>"), *ChannelName, *Username);
+		client.SendIRC(TCHAR_TO_ANSI(*InvalidCommand));
+
+		return;
+	}
+
+	FString ArmorPackageName;
+	UClass* ArmorClass = nullptr;
+	if (FPackageName::SearchForPackageOnDisk(TEXT("Armor_Helmet"), &ArmorPackageName))
+	{
+		ArmorPackageName += TEXT(".Armor_Helmet_C");
+		ArmorClass = LoadClass<AUTInventory>(NULL, *ArmorPackageName, NULL, LOAD_NoWarn, NULL);
+	}
+
+	for (auto World : KnownWorlds)
+	{
+		for (FConstPawnIterator Iterator = World->GetPawnIterator(); Iterator; ++Iterator)
+		{
+			AUTCharacter* UTChar = Cast<AUTCharacter>(*Iterator);
+			if (UTChar && UTChar->PlayerState)
+			{
+				if (ParsedCommand[1] == UTChar->PlayerState->PlayerName)
+				{
+					UTChar->AddInventory(UTChar->GetWorld()->SpawnActor<AUTArmor>(ArmorClass, FVector(0.0f), FRotator(0, 0, 0)), true);
+					Profile->credits -= ArmorCost;
+				}
+			}
+		}
+	}
+
+}
+
+void FTwitchHype::SendRedeemer(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < RedeemerCost)
+	{
+		FString InsufficientCredits = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to send a redeemer, you only have %d!"), *ChannelName, *Username, RedeemerCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*InsufficientCredits));
+
+		return;
+	}
+
+	FString RedeemerPackageName;
+	UClass* RedeemerClass = nullptr;
+	if (FPackageName::SearchForPackageOnDisk(TEXT("BP_Redeemer"), &RedeemerPackageName))
+	{
+		RedeemerPackageName += TEXT(".BP_Redeemer_C");
+		RedeemerClass = LoadClass<AUTInventory>(NULL, *RedeemerPackageName, NULL, LOAD_NoWarn, NULL);
+	}
+
+	for (auto World : KnownWorlds)
+	{
+		for (FConstPawnIterator Iterator = World->GetPawnIterator(); Iterator; ++Iterator)
+		{
+			AUTCharacter* UTChar = Cast<AUTCharacter>(*Iterator);
+			if (UTChar)
+			{
+				if (RedeemerClass)
+				{
+					UTChar->AddInventory(UTChar->GetWorld()->SpawnActor<AUTInventory>(RedeemerClass, FVector(0.0f), FRotator(0, 0, 0)), true);
+					Profile->credits -= RedeemerCost;
+				}				
+			}
+		}
+	}
+}
+
+void FTwitchHype::SendHat(const TArray<FString>& ParsedCommand, FUserProfile* Profile, const FString& Username)
+{
+	if (Profile->credits < HatCost)
+	{
+		FString InsufficientCredits = FString::Printf(TEXT("PRIVMSG %s :%s, it costs %d to send a hat, you only have %d!"), *ChannelName, *Username, HatCost, Profile->credits);
+		client.SendIRC(TCHAR_TO_ANSI(*InsufficientCredits));
+
+		return;
+	}
+
+	FString HatPackageName;
+	if (FPackageName::SearchForPackageOnDisk(ParsedCommand[1], &HatPackageName))
+	{
+		HatPackageName += TEXT(".") + ParsedCommand[1] + TEXT("_C");
+		Profile->credits -= HatCost;
+	}
+	else
+	{
+		return;
+	}
+
+	for (auto World : KnownWorlds)
+	{
+		for (FConstPawnIterator Iterator = World->GetPawnIterator(); Iterator; ++Iterator)
+		{
+			AUTCharacter* UTChar = Cast<AUTCharacter>(*Iterator);
+			if (UTChar && Cast<AUTPlayerState>(UTChar->PlayerState))
+			{
+				Cast<AUTPlayerState>(UTChar->PlayerState)->ServerReceiveHatClass(HatPackageName);
 			}
 		}
 	}

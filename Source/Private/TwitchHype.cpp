@@ -98,11 +98,6 @@ FTwitchHype::FTwitchHype()
 	}
 
 	client.HookIRCCommand("PRIVMSG", &::OnPrivMsg, this);
-
-	if (bAutoConnect)
-	{
-		ConnectToIRC();
-	}
 }
 
 FTwitchHype::~FTwitchHype()
@@ -130,6 +125,11 @@ void FTwitchHype::FlushToDB()
 void FTwitchHype::OnWorldCreated(UWorld* World, const UWorld::InitializationValues IVS)
 {
 	KnownWorlds.Add(World);
+
+	if (bAutoConnect && !client.Connected() && !client.Connecting())
+	{
+		ConnectToIRC();
+	}
 }
 
 void FTwitchHype::OnWorldDestroyed(UWorld* World)
